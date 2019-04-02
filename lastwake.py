@@ -26,7 +26,6 @@ import argparse
 import subprocess
 
 
-
 def calculateTimeDiference(suspendTime, awakeTime):
     """returns a 'datetime.time' object
     with the time diference in hours/minutes/seconds
@@ -38,30 +37,34 @@ def calculateTimeDiference(suspendTime, awakeTime):
     awakeHours = int(awakeSeconds // 3600)
     awakeMinutes = int((awakeSeconds % 3600) // 60)
     awakeSeconds = int(awakeSeconds % 60)
-    awakeTime = [awakeHours, awakeMinutes, awakeSeconds, awakeFractionalDays]
+    awakeTime = (awakeHours, awakeMinutes, awakeSeconds, awakeFractionalDays)
     return awakeTime
 
 
 # Main Program
 if __name__ == '__main__':
 
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('-b', '--boot-id', help="boot-id in the format obtained from 'journalctl --list-boots'", action="store")
-    parser.add_argument('bootId', help="optional: boot-id in the format obtained from 'journalctl --list-boots'", nargs='?')
+    parser.add_argument(
+        '-d',
+        '--daily-summary',
+        help="print daily summary",
+        action='store_true')
+    parser.add_argument(
+        'bootid',
+        help=
+        "boot-id in the format obtained from 'journalctl --list-boots' or negative integer to select last boots",
+        nargs='?',
+        default=None)
 
-    args = parser.parse_args()                  
-    
-    
-    if not len(sys.argv) > 1: 
-        # if no arguments, assume current boot
-        bootId = None
-        msg = 'current boot'
-    elif args.boot_id:
-        bootId = args.boot_id
-        msg = 'selected boot = ' + bootId
-    else:
-        bootId = args.bootId
+    args = parser.parse_args()
+
+    bootId = None
+    # if no arguments, assume current boot
+    msg = 'current boot'
+
+    if args.bootid:
+        bootId = args.bootid
         msg = 'selected boot = ' + bootId
 
     if bootId and bootId.startswith("-"):
@@ -76,8 +79,6 @@ if __name__ == '__main__':
         }
         if bId in boots:
             bootId = boots[bId]
-        
-      
 
     j = journal.Reader(journal.SYSTEM)
     j.this_boot(bootId)
@@ -91,7 +92,8 @@ if __name__ == '__main__':
         # take timestamp of first entry in list as boot time
         bootTime = j.get_next()['__REALTIME_TIMESTAMP']
     except KeyError:
-        print("\n Warning: no entries in the Journal found for boot: " + bootId + " (script terminated)\n")
+        print("\n Warning: no entries in the Journal found for boot: " +
+              bootId + " (script terminated)\n")
         sys.exit(1)
 
     # Kernel messages lingo: Hibernation = to disk; Suspend = to RAM;
@@ -113,11 +115,13 @@ if __name__ == '__main__':
     j.add_disjunction()
     j.add_match("MESSAGE=" + shuttingDown)
 
-    print(" Initial Boot Timestamp: ", bootTime.strftime("%Y-%m-%d %H:%M:%S"), "\n")
+    print(" Initial Boot Timestamp: ", bootTime.strftime("%Y-%m-%d %H:%M:%S"),
+          "\n")
 
     # times is an array of [(start-boot, suspend), (wakeup, suspend), ...]
 
-    times = []  # list of (wakeup, suspend) timestamps, starting with the cold boot
+    times = [
+    ]  # list of (wakeup, suspend) timestamps, starting with the cold boot
 
     wakeUpCandidate = bootTime
     wakeUpCandidateType = "S5 (boot)"
@@ -132,20 +136,23 @@ if __name__ == '__main__':
     for entry in j:
         try:
             msg = str(entry['MESSAGE'])
-        except:
+        except KeyError:
             continue
         #print(str(entry['__REALTIME_TIMESTAMP'] )+ ' ' + entry['MESSAGE'])
         if suspendStart in msg or hibernateStart in msg or shuttingDown in msg:
             sleepCandidate = entry['__REALTIME_TIMESTAMP']
-        elif (suspendWake in msg or hibernateWake in msg) \
-            and sleepCandidate is not None:
+        elif ((suspendWake in msg or hibernateWake in msg)
+              and sleepCandidate is not None):
             # found a wakeup: add the previous Wake along with the latest sleep
-            times.append((wakeUpCandidate, sleepCandidate, wakeUpCandidateType))
+            times.append((wakeUpCandidate, sleepCandidate,
+                          wakeUpCandidateType))
             # capture the wakeUpCandidate and switch to looking for WakeUps
             wakeUpCandidate = entry['__REALTIME_TIMESTAMP']
             sleepCandidate = None
-            if suspendWake in msg: wakeUpCandidateType = "S3 (RAM)"
-            elif hibernateWake in msg: wakeUpCandidateType = "S4 (disk)"
+            if suspendWake in msg:
+                wakeUpCandidateType = "S3 (RAM)"
+            elif hibernateWake in msg:
+                wakeUpCandidateType = "S4 (disk)"
 
     # append the last wakeUp with the sleepCandidate (might be None if still awake)
     times.append((wakeUpCandidate, sleepCandidate, wakeUpCandidateType))
@@ -183,8 +190,7 @@ if __name__ == '__main__':
         row = [
             start.strftime(defaultFormat),
             end.strftime(endFormat),
-            timeDiff_format.format(awakeTime[0], awakeTime[1]),
-            bootType
+            timeDiff_format.format(awakeTime[0], awakeTime[1]), bootType
         ]
         matrix.append(row)
         totalDaysAwake = totalDaysAwake + awakeTime[3]
@@ -194,18 +200,38 @@ if __name__ == '__main__':
 
     print(row_format.format(*rowSeparator), "\n")
 
-
     timeSinceBoot = calculateTimeDiference(lastTime, bootTime)
     # print(lastTime)
     # provide a summary
     print(
-        str(
-            "Days Since Boot: " +
-            "{:.2f}".format(timeSinceBoot[3]) +
-            " - Days Awake: " +
-            "{:.2f}".format(totalDaysAwake) +
-            " - Wake/Sleep Cycles: " +
-            str(len(times) - 1) +
-            "\n"
-        )
-    )
+        str("Days Since Boot: " + "{:.2f}".format(timeSinceBoot[3]) +
+            " - Days Awake: " + "{:.2f}".format(totalDaysAwake) +
+            " - Wake/Sleep Cycles: " + str(len(times) - 1) + "\n"))
+
+    if args.daily_summary:
+        days = {}
+        for start, end, bootType in times:
+            if end is None:
+                end = datetime.datetime.now()
+            if start and end:
+                if start.date() == end.date():
+                    day = start.date()
+                    if day not in days:
+                        days[day] = end - start
+                    else:
+                        days[day] += end - start
+                else:
+                    raise Exception("Can't handle yet")
+
+        print("""
+Daily Summary:
+
+   Day     |    Time
+---------- | --------
+""".strip())
+        for day, time in days.items():
+            print(
+                day,
+                "|",
+                str(time).split(".")[0],
+            )
